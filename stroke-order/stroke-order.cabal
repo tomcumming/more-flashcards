@@ -1,0 +1,23 @@
+cabal-version: 3.4
+name: stroke-order
+version: 0.1.0.0
+license: NONE
+build-type: Simple
+
+executable reading-app
+    main-is: Main.hs
+    hs-source-dirs: exe
+    ghc-options: -Wall
+    default-language: GHC2021
+    default-extensions:
+      DerivingVia
+      LambdaCase
+      OverloadedStrings
+      RecordWildCards
+    build-depends:
+      base ^>=4.19.1.0,
+      containers,
+      directory,
+      filepath,
+      random,
+      text,
