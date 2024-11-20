@@ -1,17 +1,19 @@
 module Main (main) where
 
 import Control.Category ((>>>))
-import Control.Monad ((>=>))
+import Control.Monad (when, (>=>))
 import Data.Bifunctor (second)
 import Data.Foldable (fold, forM_, toList)
 import Data.Function ((&))
 import Data.List qualified as L
 import Data.Map.Strict qualified as M
-import Data.Maybe (fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Sequence qualified as Seq
 import Data.Set qualified as S
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
+import System.Directory (doesFileExist)
+import System.IO (stderr)
 import System.Random (StdGen, mkStdGen, uniformR)
 import Text.Read qualified as T
 
@@ -110,6 +112,20 @@ interleave xs ys = case (xs, ys) of
   ([], _) -> ys
   (_, []) -> xs
 
+findStrokeData :: CharInCtx -> IO (Maybe (T.Text, CharInCtx))
+findStrokeData ctx = do
+  let c = charInCtxChar ctx
+  let p = "stroke-order/data/hanzi-writer-data/data/" <> c <> ".json" & T.unpack
+  doesFileExist p >>= \case
+    False -> do
+      "Can't find char " <> c & T.hPutStrLn stderr
+      pure Nothing
+    True -> do
+      jsonTxt <- T.readFile p
+      when (any (`T.elem` jsonTxt) ("\n\t" :: String)) $
+        fail ("Json contains special: " <> p)
+      Just (jsonTxt, ctx) & pure
+
 main :: IO ()
 main = do
   hskWords <- loadHskWords & fmap shuffleGroups
@@ -120,13 +136,29 @@ main = do
         toList ws
           & concatMap allChars
           & uniqueBy charInCtxChar
-  forM_ uniques $ \c ->
-    T.putStrLn $
-      fold $
-        L.intersperse
-          " - "
-          [ charInCtxChar c,
-            ctxDef c & wdTxt,
-            ctxDef c & wdPinyin,
-            ctxDef c & wdEng
-          ]
+  withStrokeData <- traverse findStrokeData uniques & fmap catMaybes
+
+  [ "Char",
+    "Word",
+    "Idx",
+    "IsTrad",
+    "Pinyin",
+    "English",
+    "StrokeData"
+    ]
+    & L.intersperse "\t"
+    & fold
+    & T.putStrLn
+
+  forM_ withStrokeData $ \(strokeData, c@CharInCtx {ctxIdx, ctxDef = WordDef {..}}) ->
+    [ charInCtxChar c,
+      wdTxt,
+      show ctxIdx & T.pack,
+      show wdTrad & T.pack,
+      wdPinyin,
+      wdEng,
+      strokeData
+    ]
+      & L.intersperse "\t"
+      & fold
+      & T.putStrLn
