@@ -39,7 +39,13 @@
     }
   });
 
+  let mistakes = new Set();
+  let totalCount = 1;
+
   document.querySelectorAll(".so-quiz").forEach((quizElem) => {
+    if (!(quizElem instanceof HTMLElement))
+      reportError("quizElem not HTMLElement");
+
     const char = quizElem.getAttribute("data-char");
     if (char === null) reportError("Can't read quiz char");
 
@@ -51,16 +57,28 @@
       padding: 5,
       showOutline: false,
       showHintAfterMisses: 1,
+      markStrokeCorrectAfterMisses: 2,
 
-      onComplete: ({ totalMistakes }) => {
-        if (totalMistakes === 0) {
+      onLoadCharDataSuccess: ({ strokes }) => {
+        totalCount = strokes.length;
+      },
+
+      onMistake: ({ strokeNum }) => {
+        mistakes.add(strokeNum);
+      },
+
+      onComplete: ({}) => {
+        const mistakeCount = mistakes.size;
+        const correctCount = totalCount - mistakeCount;
+        if (mistakeCount === 0) {
           resultElem.classList.add("so-perfect");
           resultElem.appendChild(new Text("Perfect!"));
         } else {
-          resultElem.classList.add(
-            totalMistakes > 1 ? "so-errors" : "so-1error",
+          const percent = (correctCount / totalCount) * 100;
+          resultElem.classList.add(percent < 80 ? "so-errors" : "so-1error");
+          resultElem.appendChild(
+            new Text(`${mistakeCount} mistake(s) - ${percent.toFixed(0)}%`),
           );
-          resultElem.appendChild(new Text(`${totalMistakes} error(s)`));
         }
       },
     };
@@ -69,6 +87,9 @@
     handle.quiz();
   });
   document.querySelectorAll(".so-answer-animation").forEach((animElem) => {
+    if (!(animElem instanceof HTMLElement))
+      reportError("animElem not HTMLElement");
+
     const char = animElem.getAttribute("data-char");
     if (char === null) reportError("Can't read anim char");
 
@@ -84,3 +105,5 @@
     handle.loopCharacterAnimation();
   });
 }
+
+// syncing issue?
