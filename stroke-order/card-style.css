@@ -1,0 +1,40 @@
+.card {
+  font-family: arial;
+  font-size: 20px;
+  text-align: center;
+  color: black;
+  background-color: white;
+}
+
+.characters {
+  font-size: 2em;
+}
+
+.so-current-char {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: red;
+}
+
+.so-quiz,
+.so-answer-animation {
+  padding: 0.5em 0;
+
+  > svg {
+    border: 1px solid #888;
+  }
+}
+
+.so-result {
+  &.so-errors {
+    color: red;
+  }
+
+  &.so-1error {
+    color: orange;
+  }
+
+  &.so-perfect {
+    color: green;
+  }
+}
