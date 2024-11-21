@@ -126,11 +126,31 @@ findStrokeData ctx = do
         fail ("Json contains special: " <> p)
       Just (jsonTxt, ctx) & pure
 
+charInWords ::
+  M.Map T.Text (Seq.Seq CharInCtx) ->
+  Bool ->
+  T.Text ->
+  T.Text ->
+  [T.Text]
+charInWords charMap isTrad example w =
+  charMap M.!? w
+    & maybe mempty toList
+    & filter (ctxDef >>> wdTrad >>> (== isTrad))
+    & fmap (ctxDef >>> wdTxt)
+    & uniqueBy id
+    & filter (`notElem` [w, example])
+    & take 2
+
 main :: IO ()
 main = do
   hskWords <- loadHskWords & fmap shuffleGroups
   tocflWords <- loadTocflWords & fmap shuffleGroups
   let ws = interleave (toList hskWords) (toList tocflWords)
+  let cs = concatMap allChars ws
+  let charMap =
+        fmap (\ctx -> (charInCtxChar ctx, Seq.singleton ctx)) cs
+          & M.fromListWith (<>)
+          & fmap Seq.reverse
 
   let uniques =
         toList ws
@@ -142,6 +162,7 @@ main = do
     "Word",
     "Idx",
     "IsTrad",
+    "OtherWords",
     "Pinyin",
     "English",
     "StrokeData"
@@ -155,6 +176,9 @@ main = do
       wdTxt,
       show ctxIdx & T.pack,
       show wdTrad & T.pack,
+      charInWords charMap wdTrad wdTxt (charInCtxChar c)
+        & L.intersperse "，"
+        & fold,
       wdPinyin,
       wdEng,
       strokeData
