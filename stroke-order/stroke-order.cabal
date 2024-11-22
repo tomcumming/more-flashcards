@@ -21,3 +21,4 @@ executable reading-app
       filepath,
       random,
       text,
+      unicode-data-scripts,

@@ -6,14 +6,27 @@
   background-color: white;
 }
 
-.characters {
-  font-size: 2em;
-}
+.so-info {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
 
-.so-current-char {
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: red;
+  > div {
+    > div:nth-child(1) {
+      font-size: 2em;
+
+      > span.so-current {
+        text-decoration: underline;
+        text-decoration-style: dotted;
+        text-decoration-color: red;
+      }
+    }
+
+    > div:nth-child(3) {
+      max-height: 2.25em;
+      overflow: hidden;
+    }
+  }
 }
 
 .so-quiz,

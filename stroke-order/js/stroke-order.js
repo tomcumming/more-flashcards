@@ -17,26 +17,43 @@
     throw new Error();
   }
 
-  document.querySelectorAll(".so-characters").forEach((charsElem) => {
-    const word = charsElem.getAttribute("data-word");
-    const char = charsElem.getAttribute("data-char");
-    const idxTxt = charsElem.getAttribute("data-idx");
+  /** @argument isQuiz {boolean} @argument char {string} @argument word {string} */
+  function makeWord(isQuiz, char, word) {
+    return Array.from(word)
+      .map(
+        (c) => `<span
+        class="${c === char ? "so-current" : ""}"
+        >${c === char && isQuiz ? "？" : c}</span>`,
+      )
+      .join("");
+  }
 
-    if (word === null || idxTxt === null)
+  document.querySelectorAll(".so-info").forEach((infoElem) => {
+    const wordsAttr = infoElem.getAttribute("data-words");
+    const pinyinAttr = infoElem.getAttribute("data-pinyin");
+    const englishAttr = infoElem.getAttribute("data-english");
+    const char = infoElem.getAttribute("data-char");
+    const isQuiz = infoElem.hasAttribute("data-quiz");
+
+    if (
+      wordsAttr === null ||
+      pinyinAttr === null ||
+      englishAttr === null ||
+      char === null
+    )
       reportError("Cant get attrs on .so-character");
 
-    const idx = parseInt(idxTxt);
+    const words = wordsAttr.split("，");
+    const pinyin = pinyinAttr.split("，");
+    const english = englishAttr.split("，");
 
-    {
-      const chars = Array.from(word);
-
-      chars.forEach((c, i) => {
-        const span = document.createElement("span");
-        span.innerText = c === char ? "？" : c;
-        span.className = i == idx ? "so-current-char" : "";
-        charsElem.appendChild(span);
-      });
-    }
+    words.forEach((word, idx) => {
+      const item = document.createElement("div");
+      item.innerHTML = `<div>${makeWord(isQuiz, char, word)}</div>
+          <div>${pinyin[idx]}</div>
+          <div>${english[idx]}</div>`;
+      infoElem.appendChild(item);
+    });
   });
 
   let mistakes = new Set();

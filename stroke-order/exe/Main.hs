@@ -6,6 +6,7 @@ import Data.Bifunctor (second)
 import Data.Foldable (fold, forM_, toList)
 import Data.Function ((&))
 import Data.List qualified as L
+import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict qualified as M
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Sequence qualified as Seq
@@ -16,6 +17,7 @@ import System.Directory (doesFileExist)
 import System.IO (stderr)
 import System.Random (StdGen, mkStdGen, uniformR)
 import Text.Read qualified as T
+import Unicode.Char.General.Scripts qualified as UC
 
 data WordDef = WordDef
   { wdTxt :: !T.Text,
@@ -24,11 +26,6 @@ data WordDef = WordDef
     wdTrad :: !Bool
   }
   deriving (Show)
-
-data CharInCtx = CharInCtx
-  { ctxIdx :: Int,
-    ctxDef :: WordDef
-  }
 
 parseHskRow :: T.Text -> IO (Int, WordDef)
 parseHskRow =
@@ -71,6 +68,13 @@ loadTocflWords = do
       & fmap (fmap (second Seq.singleton) >>> M.fromListWith (<>))
   M.elems lvls & Seq.fromList & pure
 
+maskHints :: WordDef -> WordDef
+maskHints wd = wd {wdEng = T.map go (wdEng wd)}
+  where
+    go c = case UC.script c of
+      UC.Han -> '？'
+      _ -> c
+
 shuffleGroups :: forall a. Seq.Seq (Seq.Seq a) -> Seq.Seq a
 shuffleGroups = fmap (shuffleGroup stdGen) >>> fold
   where
@@ -84,19 +88,6 @@ shuffleGroups = fmap (shuffleGroup stdGen) >>> fold
             x = s Seq.!? i & fromMaybe (error "OOB")
             s' = Seq.deleteAt i s
          in x Seq.<| shuffleGroup g'' s'
-
-allChars :: WordDef -> [CharInCtx]
-allChars wd =
-  T.unpack (wdTxt wd)
-    & zip [0 ..]
-    & fmap (fst >>> (`CharInCtx` wd))
-
-charInCtxChar :: CharInCtx -> T.Text
-charInCtxChar CharInCtx {..} =
-  wdTxt ctxDef
-    & T.unpack
-    & (!! ctxIdx)
-    & T.singleton
 
 uniqueBy :: (Ord b) => (a -> b) -> [a] -> [a]
 uniqueBy f = go mempty
@@ -112,9 +103,8 @@ interleave xs ys = case (xs, ys) of
   ([], _) -> ys
   (_, []) -> xs
 
-findStrokeData :: CharInCtx -> IO (Maybe (T.Text, CharInCtx))
-findStrokeData ctx = do
-  let c = charInCtxChar ctx
+findStrokeData :: T.Text -> IO (Maybe (T.Text, T.Text))
+findStrokeData c = do
   let p = "stroke-order/data/hanzi-writer-data/data/" <> c <> ".json" & T.unpack
   doesFileExist p >>= \case
     False -> do
@@ -124,65 +114,62 @@ findStrokeData ctx = do
       jsonTxt <- T.readFile p
       when (any (`T.elem` jsonTxt) ("\n\t" :: String)) $
         fail ("Json contains special: " <> p)
-      Just (jsonTxt, ctx) & pure
-
-charInWords ::
-  M.Map T.Text (Seq.Seq CharInCtx) ->
-  Bool ->
-  T.Text ->
-  T.Text ->
-  [T.Text]
-charInWords charMap isTrad example w =
-  charMap M.!? w
-    & maybe mempty toList
-    & filter (ctxDef >>> wdTrad >>> (== isTrad))
-    & fmap (ctxDef >>> wdTxt)
-    & uniqueBy id
-    & filter (`notElem` [w, example])
-    & take 2
+      Just (c, jsonTxt) & pure
 
 main :: IO ()
 main = do
   hskWords <- loadHskWords & fmap shuffleGroups
   tocflWords <- loadTocflWords & fmap shuffleGroups
-  let ws = interleave (toList hskWords) (toList tocflWords)
-  let cs = concatMap allChars ws
-  let charMap =
-        fmap (\ctx -> (charInCtxChar ctx, Seq.singleton ctx)) cs
-          & M.fromListWith (<>)
-          & fmap Seq.reverse
+  let ws = interleave (toList hskWords) (toList tocflWords) & fmap maskHints
 
-  let uniques =
-        toList ws
-          & concatMap allChars
-          & uniqueBy charInCtxChar
-  withStrokeData <- traverse findStrokeData uniques & fmap catMaybes
+  let charMap =
+        ws
+          & L.concatMap
+            ( \wd ->
+                wdTxt wd
+                  & T.unpack
+                  & uniqueBy id
+                  & fmap (T.singleton >>> (,NE.singleton wd))
+            )
+          & M.fromListWith (<>)
+          & fmap NE.reverse
+
+  let uniqueChars =
+        L.concatMap (wdTxt >>> T.unpack) ws
+          & uniqueBy id
+          & fmap T.singleton
+
+  withStrokeData <- traverse findStrokeData uniqueChars & fmap catMaybes
 
   [ "Char",
-    "Word",
-    "Idx",
-    "IsTrad",
-    "OtherWords",
+    "Words",
     "Pinyin",
     "English",
+    "IsTrad",
     "StrokeData"
     ]
     & L.intersperse "\t"
     & fold
     & T.putStrLn
 
-  forM_ withStrokeData $ \(strokeData, c@CharInCtx {ctxIdx, ctxDef = WordDef {..}}) ->
-    [ charInCtxChar c,
-      wdTxt,
-      show ctxIdx & T.pack,
-      show wdTrad & T.pack,
-      charInWords charMap wdTrad wdTxt (charInCtxChar c)
-        & L.intersperse "，"
-        & fold,
-      wdPinyin,
-      wdEng,
+  forM_ withStrokeData $ \(c, strokeData) -> do
+    firstDef NE.:| allDefs <-
+      charMap M.!? c
+        & maybe (fail "Not found in charMap") pure
+
+    let isTrad = wdTrad firstDef
+    let defs = firstDef NE.:| (filter (wdTrad >>> (== isTrad)) allDefs & take 2)
+
+    [ c,
+      fmap wdTxt defs & commaSep,
+      fmap wdPinyin defs & commaSep,
+      fmap (wdEng >>> sanitize) defs & commaSep,
+      if isTrad then "繁體" else "简体",
       strokeData
-    ]
+      ]
       & L.intersperse "\t"
       & fold
       & T.putStrLn
+  where
+    commaSep = NE.intersperse "，" >>> fold
+    sanitize = T.map (\c -> if c == '，' then ',' else c)
