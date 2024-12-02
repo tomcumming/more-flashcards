@@ -1,10 +1,12 @@
 cabal-version: 3.4
-name: stroke-order
+name: pronunciation
 version: 0.1.0.0
 license: NONE
 build-type: Simple
 
-common shared
+executable pronunciation
+    main-is: Main.hs
+    hs-source-dirs: exe
     ghc-options: -Wall
     default-language: GHC2021
     default-extensions:
@@ -18,18 +20,5 @@ common shared
       directory,
       filepath,
       random,
+      stroke-order,
       text,
-      unicode-data-scripts,
-
-library
-  import: shared
-  hs-source-dirs: src
-  exposed-modules:
-    DataLoading
-
-executable stroke-order
-    import: shared
-    main-is: Main.hs
-    hs-source-dirs: exe
-    build-depends:
-      stroke-order
