@@ -3,7 +3,6 @@ module Main (main) where
 import Control.Category ((>>>))
 import Control.Monad (forM_)
 import Data.Bool (bool)
-import Data.Char (isSpace)
 import Data.Foldable (fold, toList)
 import Data.Function ((&))
 import Data.List qualified as List
@@ -14,6 +13,7 @@ import Data.Sequence qualified as Sq
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
 import DataLoading (WordDef (..), interleave, loadHskWords, loadTocflWords, shuffleGroups, uniqueBy, wdTxt)
+import Pinyin qualified as Pinyin (normalise)
 
 putRowLn :: [T.Text] -> IO ()
 putRowLn = List.intersperse "\t" >>> fold >>> T.putStrLn
@@ -45,7 +45,8 @@ main = do
     let isTrad = any wdTrad wds & boolean
     let pinyin =
           wds
-            & fmap (wdPinyin >>> normalisePinyin)
+            & fmap
+              (\WordDef {wdPinyin, wdTxt} -> Pinyin.normalise wdTxt wdPinyin)
             & toList
             & uniqueBy id
             & List.intersperse ", "
@@ -59,6 +60,3 @@ main = do
 
     [word, isSimp, isTrad, pinyin, english]
       & putRowLn
-
-normalisePinyin :: T.Text -> T.Text
-normalisePinyin = T.filter (isSpace >>> not)

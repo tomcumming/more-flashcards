@@ -12,6 +12,7 @@ executable pronunciation
     default-extensions:
       DerivingVia
       LambdaCase
+      MultiWayIf
       OverloadedStrings
       RecordWildCards
     build-depends:
@@ -22,3 +23,5 @@ executable pronunciation
       random,
       stroke-order,
       text,
+    other-modules:
+      Pinyin
