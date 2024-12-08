@@ -1,16 +1,24 @@
-module Pinyin (normalise) where
+module Pinyin
+  ( normalise,
+    initials,
+    accents,
+    Tone,
+    finals,
+    unAccent,
+  )
+where
 
-import Control.Applicative ((<|>))
 import Control.Category ((>>>))
-import Data.Bifunctor (bimap, first, second)
+import Control.Monad (guard)
 import Data.Char (isAlpha)
 import Data.Foldable (Foldable (fold), toList)
 import Data.Function ((&))
-import Data.List qualified as L
+import Data.List qualified as List
 import Data.Map qualified as M
-import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
+import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Ord (Down (..))
 import Data.Sequence qualified as Sq
+import Data.Set qualified as S
 import Data.Text qualified as T
 
 type Tone = Int
@@ -22,32 +30,26 @@ accents =
       ('á', ('a', 2)),
       ('ǎ', ('a', 3)),
       ('à', ('a', 4)),
-      ('a', ('a', 5)),
       ('ē', ('e', 1)),
       ('é', ('e', 2)),
       ('ě', ('e', 3)),
       ('è', ('e', 4)),
-      ('e', ('e', 5)),
       ('ī', ('i', 1)),
       ('í', ('i', 2)),
       ('ǐ', ('i', 3)),
       ('ì', ('i', 4)),
-      ('i', ('i', 5)),
       ('ō', ('o', 1)),
       ('ó', ('o', 2)),
       ('ǒ', ('o', 3)),
       ('ò', ('o', 4)),
-      ('o', ('o', 5)),
       ('ū', ('u', 1)),
       ('ú', ('u', 2)),
       ('ǔ', ('u', 3)),
       ('ù', ('u', 4)),
-      ('u', ('u', 5)),
       ('ǖ', ('v', 1)),
       ('ǘ', ('v', 2)),
       ('ǚ', ('v', 3)),
-      ('ǜ', ('v', 4)),
-      ('ü', ('v', 5))
+      ('ǜ', ('v', 4))
     ]
 
 initials :: Sq.Seq T.Text
@@ -121,78 +123,107 @@ finals =
     ]
     & Sq.sortOn (T.length >>> Down)
 
-parseInitial :: T.Text -> [(T.Text, T.Text)]
-parseInitial inTxt = do
-  i <- toList initials <> [""]
-  txt <- T.stripPrefix i inTxt & maybeToList
-  pure (i, txt)
+unUmlaut :: Char -> Char
+unUmlaut = \case
+  'ü' -> 'v'
+  c -> c
 
-parseFinal :: T.Text -> [((T.Text, Tone), T.Text)]
-parseFinal = \inTxt -> do
-  f <- toList finals
-  go inTxt f
-    & maybeToList
-    & fmap (first (second (fromMaybe 5)))
-  where
-    go :: T.Text -> T.Text -> Maybe ((T.Text, Maybe Tone), T.Text)
-    go inTxt f = case (T.uncons inTxt, T.uncons f) of
-      (_, Nothing) -> pure (("", Nothing), inTxt)
-      (Just (c1, inTxt'), Just (c2, f')) | Just (c, t) <- matchChar c1 c2 -> do
-        go inTxt' f' & fmap (first (bimap (T.singleton c <>) (t <|>)))
-      _ -> Nothing
-
-matchChar :: Char -> Char -> Maybe (Char, Maybe Tone)
-matchChar c1 c2
-  | c1 == c2 = Just (c1, Nothing)
-  | Just (c3, t) <- accents M.!? c1, c3 == c2 = Just (c3, Just t)
-  | otherwise = Nothing
-
-parsePinyin :: T.Text -> [((T.Text, Tone), T.Text)]
-parsePinyin inTxt = do
-  (i, inTxt2) <- parseInitial inTxt -- or nothing
-  ((f, t), inTxt3) <- parseFinal inTxt2
-  pure ((i <> f, t), inTxt3)
-
-parsePinyins :: T.Text -> [[T.Text]]
-parsePinyins = \case
-  "" -> [[]]
-  "diǎnr" -> [["dian3", "r"]]
-  "ng" -> [["ng"]]
-  "tóur" -> [["tou2", "r"]]
-  inTxt -> do
-    ((p, t), inTxt') <- parsePinyin inTxt
-    fmap ((p <> showTone t) :) (parsePinyins inTxt')
+unAccent :: T.Text -> (T.Text, Tone)
+unAccent txt =
+  ( T.map (\c -> accents M.!? c & maybe c fst) txt & T.map unUmlaut,
+    T.unpack txt
+      & mapMaybe (accents M.!?)
+      & listToMaybe
+      & maybe 5 snd
+  )
 
 showTone :: Tone -> T.Text
 showTone = \case
   5 -> ""
   t -> show t & T.pack
 
-normalise :: T.Text -> T.Text -> T.Text
-normalise wdTxt inTxt =
-  T.filter isAlpha inTxt
-    & T.map nonStandards
-    & T.toLower
-    & parsePinyins
-    & filter (length >>> wordCount wdTxt)
-    & listToMaybe
-    & (fromMaybe ([wdTxt, inTxt] & T.unwords & T.unpack & error))
-    & L.intersperse " "
-    & fold
+parsePinyin ::
+  M.Map Char (S.Set T.Text) ->
+  T.Text ->
+  T.Text ->
+  [((T.Text, Tone), T.Text, T.Text)]
+parsePinyin uh wdTxt inTxt = case T.uncons wdTxt of
+  Just (c, wdTxt') | Just ms <- uh M.!? c -> do
+    pres <- toList ms
+    let (py, tone) = T.take (T.length pres) inTxt & unAccent
+    py == pres & guard
+    pure ((py, tone), wdTxt', T.drop (T.length pres) inTxt)
+  _ -> []
 
-wordCount :: T.Text -> Int -> Bool
-wordCount wdTxt c = case wdTxt of
-  "窗" | c == 2 -> True
-  "越" | c == 2 -> True
-  "角色" | c == 1 -> True
-  "秘" | c == 2 -> True
-  "嘗" | c == 2 -> True
-  "汙" | c == 2 -> True
-  "不至" | c == 3 -> True
-  "迴" | c == 2 -> True
-  "小伙" | c == 3 -> True
-  "剎" | c == 2 -> True
-  _ -> T.length wdTxt == c
+corrections :: M.Map (T.Text, T.Text) [(T.Text, Tone)]
+corrections =
+  M.fromList
+    [ (("姊姊", "jiějie"), [("zi", 3), ("zi", 3)]),
+      (("窗", "chuānghu"), [("chuang", 1)]),
+      (("越", "yuèyuè"), [("yue", 4)]),
+      (("角色", "jiǎo"), [("jiao", 3), ("se", 4)]),
+      (("垃圾", "lèsè"), [("le", 4), ("se", 4)]),
+      (("姊妹", "jiěmèi"), [("zi", 3), ("mei", 4)]),
+      (("秘", "mìmì"), [("mi", 4)]),
+      (("嘗", "chángshì"), [("chang", 2)]),
+      (("暫時", "zhànshí"), [("zan", 5), ("shi", 2)]),
+      (("概括", "gàiguā"), [("gai", 4), ("kuo", 4)]),
+      (("艘", "sāo"), [("sou", 1)]),
+      (("哎喲", "āiyāo"), [("ai", 1), ("you", 1)]),
+      (("汙", "wūrǎn"), [("wu", 1)]),
+      (("混淆", "hùnyáo"), [("hun", 4), ("xiao", 2)]),
+      (("忽略", "hūluè"), [("hu", 1), ("lve", 4)]),
+      (("略微", "luèwēi"), [("lve", 4), ("wei", 1)]),
+      (("骯髒", "āngzhāng"), [("ang", 1), ("zang", 1)]),
+      (("恐吓", "kǒnghè"), [("king", 3), ("he", 4)]),
+      (("战略", "zhànluè"), [("zhan", 4), ("lve", 4)]),
+      (("說服", "shuìfú"), [("shuo", 1), ("fu", 2)]),
+      (("囊括", "nángguā"), [("nang", 2), ("kuo", 4)]),
+      (("懸崖", "xuányái"), [("xuan", 2), ("ya", 2)]),
+      (("掠夺", "luèduó"), [("lve", 4), ("duo", 2)]),
+      (("曝光", "bàoguāng"), [("bao", 4), ("guang", 1)]),
+      (("供給", "gōnjǐ"), [("gong", 1), ("ji", 3)]),
+      (("不至", "bùzhìyú"), [("bu", 4), ("zhi", 4)]),
+      (("迴", "huíxiǎng"), [("hui", 2)]),
+      (("蝸牛", "guāniú"), [("wo", 1), ("niu", 2)]),
+      (("小伙", "xiǎohuǒzi"), [("xiao", 3), ("huo", 3)]),
+      (("步驟", "bùzòu"), [("bu", 4), ("zhou", 4)]),
+      (("短暫", "duǎnzhàn"), [("duan", 3), ("zan", 4)]),
+      (("賜", "sì"), [("si", 4)]),
+      (("剎", "shāchē"), [("sha", 1)])
+    ]
+
+parsePinyins ::
+  M.Map Char (S.Set T.Text) ->
+  T.Text ->
+  T.Text ->
+  [[(T.Text, Tone)]]
+parsePinyins uh wdTxt inTxt
+  | T.null wdTxt && T.null inTxt = [[]]
+  | Just cs <- corrections M.!? (wdTxt, inTxt) = [cs]
+  | otherwise = do
+      ((p, t), wdTxt', inTxt') <- parsePinyin uh wdTxt inTxt
+      ps <- parsePinyins uh wdTxt' inTxt'
+      (p, t) : ps & pure
+
+normalise :: M.Map Char (S.Set T.Text) -> T.Text -> T.Text -> T.Text
+normalise uh wdTxt inTxt =
+  parsePinyins uh wdTxt (cleanUpPinyin inTxt)
+    & errorEmpty
+    & fmap (fmap showPair >>> List.intersperse " " >>> fold)
+    & List.intersperse ", "
+    & fold
+  where
+    showPair :: (T.Text, Tone) -> T.Text
+    showPair (txt, tone) = txt <> showTone tone
+
+    errorEmpty :: [[(T.Text, Tone)]] -> [[(T.Text, Tone)]]
+    errorEmpty rs
+      | null rs = T.unwords ["emptyError", wdTxt, cleanUpPinyin inTxt] & T.unpack & error
+      | otherwise = rs
+
+cleanUpPinyin :: T.Text -> T.Text
+cleanUpPinyin = T.filter isAlpha >>> T.map nonStandards >>> T.toLower
 
 nonStandards :: Char -> Char
 nonStandards = \case

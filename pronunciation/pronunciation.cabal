@@ -21,7 +21,9 @@ executable pronunciation
       directory,
       filepath,
       random,
+      streaming,
       stroke-order,
       text,
     other-modules:
       Pinyin
+      Unihan

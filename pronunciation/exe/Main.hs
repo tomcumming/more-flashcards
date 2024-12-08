@@ -13,7 +13,8 @@ import Data.Sequence qualified as Sq
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
 import DataLoading (WordDef (..), interleave, loadHskWords, loadTocflWords, shuffleGroups, uniqueBy, wdTxt)
-import Pinyin qualified as Pinyin (normalise)
+import Pinyin qualified (normalise)
+import Unihan qualified
 
 putRowLn :: [T.Text] -> IO ()
 putRowLn = List.intersperse "\t" >>> fold >>> T.putStrLn
@@ -23,6 +24,7 @@ boolean = bool "0" "1"
 
 main :: IO ()
 main = do
+  uh <- Unihan.loadUnihan
   hskWords <- loadHskWords & fmap shuffleGroups
   tocflWords <- loadTocflWords & fmap shuffleGroups
 
@@ -46,7 +48,7 @@ main = do
     let pinyin =
           wds
             & fmap
-              (\WordDef {wdPinyin, wdTxt} -> Pinyin.normalise wdTxt wdPinyin)
+              (\WordDef {wdPinyin, wdTxt} -> Pinyin.normalise uh wdTxt wdPinyin)
             & toList
             & uniqueBy id
             & List.intersperse ", "
