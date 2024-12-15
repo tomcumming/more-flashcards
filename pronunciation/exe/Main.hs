@@ -15,6 +15,7 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as T
 import DataLoading (WordDef (..), interleave, loadHskWords, loadTocflWords, shuffleGroups, uniqueBy, wdTxt)
 import Streaming.Prelude qualified as St
+import System.Environment (getArgs)
 import System.IO (stderr)
 
 putRowLn :: [T.Text] -> IO ()
@@ -215,8 +216,8 @@ makeCards cds dss w = case dss M.!? w of
 
     (cCards <> if completelyCovered then [] else [wCard]) & pure
 
-main :: IO ()
-main = do
+doPinyins :: IO ()
+doPinyins = do
   hskWords <- loadHskWords & fmap shuffleGroups
   tocflWords <- loadTocflWords & fmap shuffleGroups
 
@@ -241,3 +242,53 @@ main = do
       showEnglish crdEng
     ]
       & putRowLn
+
+doEnglish :: IO ()
+doEnglish = do
+  hskWords <- loadHskWords & fmap shuffleGroups
+  tocflWords <- loadTocflWords & fmap shuffleGroups
+
+  let ws =
+        interleave (toList hskWords) (toList tocflWords)
+          & fmap wdTxt
+          & uniqueBy id
+  let wss = S.fromList ws
+
+  dss <-
+    St.readFile "stroke-order/data/cedict_1_0_ts_utf-8_mdbg.txt" $
+      St.map T.pack
+        >>> CCCEdict.parseLines
+        >>> St.filter
+          ( \CCCEdict.Definition {..} ->
+              S.member defSimp wss || S.member defTrad wss
+          )
+        >>> St.map
+          ( \d ->
+              S.fromList [CCCEdict.defSimp d, CCCEdict.defTrad d]
+                & toList
+                & fmap (,Sq.singleton d)
+                & M.fromListWith (<>)
+          )
+        >>> St.fold_ (M.unionWith (<>)) mempty id
+
+  ["Word", "Pinyin", "English"] & putRowLn
+  forM_ ws $ \w ->
+    dss M.!? w & \case
+      Nothing -> T.hPutStrLn stderr ("Not found: " <> w)
+      Just ds -> do
+        pys <-
+          pinyinFromDefs w ds
+            <&> ( toList
+                    >>> fmap (toList >>> T.unwords)
+                    >>> List.intersperse ", "
+                    >>> fold
+                )
+        let eng = foldMap CCCEdict.defEng ds & showEnglish
+        [w, pys, eng] & putRowLn
+
+main :: IO ()
+main =
+  getArgs >>= \case
+    ["pronunciation"] -> doPinyins
+    ["translation"] -> doEnglish
+    args -> "Use arg 'pronunciation' or 'translation': " <> show args & fail
