@@ -9,7 +9,6 @@ import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.List qualified as List
 import Data.Map.Strict qualified as M
-import Data.Maybe (fromMaybe)
 import Data.Sequence qualified as Sq
 import Data.Set qualified as S
 import Data.Text qualified as T
@@ -67,6 +66,31 @@ loadDefinitionsForWordsAndChars ws = do
         )
       >>> St.fold_ (M.unionWith (<>)) mempty id
 
+makeCharDefsLookup ::
+  [T.Text] ->
+  IO (M.Map T.Text (Sq.Seq CCCEdict.Definition))
+makeCharDefsLookup ws = do
+  let wss = foldMap (S.singleton) ws
+  let css = foldMap (T.unpack >>> fmap T.singleton >>> S.fromList) ws
+  St.readFile "stroke-order/data/cedict_1_0_ts_utf-8_mdbg.txt" $
+    St.map T.pack
+      >>> CCCEdict.parseLines
+      >>> St.filter
+        ( \CCCEdict.Definition {..} ->
+            S.member defSimp wss || S.member defTrad wss
+        )
+      >>> St.map
+        ( \d ->
+            (CCCEdict.defSimp d <> CCCEdict.defTrad d)
+              & T.unpack
+              & foldMap (T.singleton >>> S.singleton)
+              & S.intersection css
+              & toList
+              & fmap (,Sq.singleton d)
+              & M.fromListWith (<>)
+        )
+      >>> St.fold_ (M.unionWith (<>)) mempty id
+
 showPinyins :: S.Set (Sq.Seq T.Text) -> Sq.Seq T.Text
 showPinyins =
   toList
@@ -99,18 +123,45 @@ subsetPinyin ws cs =
     ws
     (foldMap (\p -> S.fromList [p, T.dropEnd 1 p <> "5"]) cs)
 
+-- | Find parent definition entries and dedup (indexes both simp & trad)
+--   while preserving order
+lookupParentWords ::
+  M.Map T.Text (Sq.Seq CCCEdict.Definition) ->
+  T.Text ->
+  T.Text ->
+  Sq.Seq T.Text
+lookupParentWords ds w c =
+  ds M.!? c
+    & foldMap toList
+    & filter
+      ( \CCCEdict.Definition {..} ->
+          defSimp /= w
+            && defTrad /= w
+      )
+    & fmap
+      ( \CCCEdict.Definition {..} ->
+          if c `T.isInfixOf` defSimp
+            then defSimp
+            else defTrad
+      )
+    & filter (/= c)
+    & uniqueBy id
+    & take 2
+    & Sq.fromList
+
 data Card = Card
   { crdTxt :: T.Text,
     crdPinyin :: Sq.Seq T.Text,
     crdEng :: Sq.Seq T.Text,
-    crdParent :: Maybe T.Text
+    crdParentWords :: Sq.Seq T.Text
   }
 
 makeCards ::
   M.Map T.Text (Sq.Seq CCCEdict.Definition) ->
+  M.Map T.Text (Sq.Seq CCCEdict.Definition) ->
   T.Text ->
   IO [Card]
-makeCards dss w = case dss M.!? w of
+makeCards cds dss w = case dss M.!? w of
   Nothing -> do
     "cedict missing: " <> w & T.hPutStrLn stderr
     pure []
@@ -121,7 +172,7 @@ makeCards dss w = case dss M.!? w of
             { crdTxt = w,
               crdEng = foldMap CCCEdict.defEng ds,
               crdPinyin = showPinyins wPys,
-              crdParent = Nothing
+              crdParentWords = mempty
             }
     cs <-
       toList (childCharacters w)
@@ -156,7 +207,7 @@ makeCards dss w = case dss M.!? w of
                   { crdTxt = c,
                     crdEng = crdEng wCard,
                     crdPinyin = toList py & Sq.fromList,
-                    crdParent = Just w
+                    crdParentWords = Sq.singleton w <> lookupParentWords cds w c
                   }
                   & pure @[]
             )
@@ -176,16 +227,17 @@ main = do
           & concatMap wordAndChars
           & uniqueBy id
   ds <- loadDefinitionsForWordsAndChars ws
+  cds <- makeCharDefsLookup ws
 
   cards <-
-    traverse (makeCards ds) ws
+    traverse (makeCards cds ds) ws
       & fmap (concat >>> uniqueBy crdTxt)
 
   ["Word", "Pinyin", "Parent", "English"] & putRowLn
   forM_ cards $ \Card {..} ->
     [ crdTxt,
       toList crdPinyin & List.intersperse ", " & fold,
-      fromMaybe "" crdParent,
+      toList crdParentWords & List.intersperse ", " & fold,
       showEnglish crdEng
     ]
       & putRowLn
