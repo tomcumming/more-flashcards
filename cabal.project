@@ -1,3 +1,8 @@
 packages:
   stroke-order
   pronunciation
+
+source-repository-package
+    type: git
+    location: git@github.com:tomcumming/haskell-cc-cedict.git
+    tag: 0.1.0.0

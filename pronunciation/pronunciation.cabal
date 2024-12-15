@@ -16,7 +16,8 @@ executable pronunciation
       OverloadedStrings
       RecordWildCards
     build-depends:
-      base ^>=4.19.1.0,
+      base,
+      cc-cedict,
       containers,
       directory,
       filepath,
@@ -25,5 +26,6 @@ executable pronunciation
       stroke-order,
       text,
     other-modules:
+      CEdict
       Pinyin
       Unihan

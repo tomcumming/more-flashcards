@@ -12,9 +12,9 @@
         packages = [
           pkgs.zlib
 
-          pkgs.haskell.compiler.ghc98
+          pkgs.haskell.compiler.ghc910
           pkgs.cabal-install
-          (pkgs.haskell-language-server.override { supportedGhcVersions = [ "98" ]; })
+          (pkgs.haskell-language-server.override { supportedGhcVersions = [ "910" ]; })
           pkgs.ormolu
 
           pkgs.nodejs_22
