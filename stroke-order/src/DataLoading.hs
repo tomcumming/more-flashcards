@@ -2,6 +2,7 @@ module DataLoading
   ( WordDef (..),
     loadHskWords,
     loadTocflWords,
+    shuffleGroup,
     shuffleGroups,
     uniqueBy,
     interleave,
@@ -71,19 +72,22 @@ loadTocflWords = do
       & fmap (fmap (second Seq.singleton) >>> M.fromListWith (<>))
   M.elems lvls & Seq.fromList & pure
 
-shuffleGroups :: forall a. Seq.Seq (Seq.Seq a) -> Seq.Seq a
-shuffleGroups = fmap (shuffleGroup stdGen) >>> fold
+shuffleGroup :: forall a. Seq.Seq a -> Seq.Seq a
+shuffleGroup = go stdGen
   where
     stdGen = mkStdGen 0
 
-    shuffleGroup :: StdGen -> Seq.Seq a -> Seq.Seq a
-    shuffleGroup g' = \case
+    go :: StdGen -> Seq.Seq a -> Seq.Seq a
+    go g' = \case
       Seq.Empty -> mempty
       s ->
         let (i, g'') = uniformR (0, Seq.length s & pred) g'
             x = s Seq.!? i & fromMaybe (error "OOB")
             s' = Seq.deleteAt i s
-         in x Seq.<| shuffleGroup g'' s'
+         in x Seq.<| go g'' s'
+
+shuffleGroups :: Seq.Seq (Seq.Seq a) -> Seq.Seq a
+shuffleGroups = fmap shuffleGroup >>> fold
 
 uniqueBy :: (Ord b) => (a -> b) -> [a] -> [a]
 uniqueBy f = go mempty
