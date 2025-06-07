@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-24.11";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
   };
   outputs = { self, nixpkgs }:
     let
@@ -12,9 +12,9 @@
         packages = [
           pkgs.zlib
 
-          pkgs.haskell.compiler.ghc910
+          pkgs.haskell.compiler.ghc9122
           pkgs.cabal-install
-          (pkgs.haskell-language-server.override { supportedGhcVersions = [ "910" ]; })
+          (pkgs.haskell-language-server.override { supportedGhcVersions = [ "9122" ]; })
           pkgs.ormolu
 
           pkgs.nodejs_22
