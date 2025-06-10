@@ -4,17 +4,12 @@ import CCCEdict qualified
 import CEdict qualified
 import Control.Category ((>>>))
 import Control.Monad (forM_)
-import Data.Bifunctor (second)
-import Data.Foldable (fold, toList)
-import Data.Foldable1 (maximumBy)
-import Data.Function (on, (&))
+import Data.Foldable (find, fold, toList)
+import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.List qualified as List
-import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict qualified as M
 import Data.Maybe (fromMaybe)
-import Data.Monoid (Sum (..))
-import Data.Ord (comparing)
 import Data.Sequence qualified as Sq
 import Data.Set qualified as S
 import Data.Text qualified as T
@@ -111,149 +106,75 @@ doEnglish = do
 
 data PronunciationCard = PronunciationCard
   { pcClue :: T.Text,
-    pcWord :: T.Text,
-    pcPinyin :: T.Text,
-    pcTranslation :: T.Text
+    pcChar :: T.Text,
+    pcPrimary :: (T.Text, T.Text, T.Text),
+    pcSecondary :: Maybe (T.Text, T.Text, T.Text)
   }
 
 doPronunciation :: IO ()
 doPronunciation = do
-  hskWords <- loadHskWords
-  tocflWords <- loadTocflWords
+  hskWords <- loadHskWords <&> shuffleGroups
+  tocflWords <- loadTocflWords <&> shuffleGroups
 
-  let css =
-        M.unionWith
-          max
-          (charScores hskWords)
-          (charScores tocflWords)
-
-  let charOrder =
+  let charLearnOrder =
         interleave (toList hskWords) (toList tocflWords)
-          & fold
           & foldMap (wdTxt >>> charsInWord >>> toList)
           & List.nub
 
-  let allWords =
-        (hskWords <> tocflWords)
-          & fold
-          & foldMap (wdTxt >>> S.singleton)
-
-  let wordIndex =
-        allWords
-          & foldMap
-            ( \w ->
-                charsInWord w
-                  & foldMap ((,S.singleton w) >>> List.singleton)
-            )
-          & M.fromListWith (<>)
-
   let defIndex =
-        tocflWords <> hskWords -- prefer hsk def
-          & foldMap (foldMap (\wd -> [(wdTxt wd, wd)]))
-          & M.fromList
+        interleave (toList hskWords) (toList tocflWords)
+          & foldMap
+            ( \wd ->
+                charsInWord (wdTxt wd)
+                  & toList
+                  & fmap (,Sq.singleton wd)
+            )
+          & M.fromListWith (flip (<>))
 
-  let coveringWords = go css wordIndex (S.fromList charOrder) charOrder
+  let cards =
+        charLearnOrder
+          <&> \c -> case lookupCharDefs defIndex c of
+            (prim, maybeSec) ->
+              PronunciationCard
+                { pcClue =
+                    wdTxt prim
+                      & T.map (\c2 -> if c == T.singleton c2 then c2 else '_'),
+                  pcChar = c,
+                  pcPrimary = (wdTxt prim, wdPinyin prim, wdEng prim),
+                  pcSecondary =
+                    maybeSec
+                      <&> \sec -> (wdTxt sec, wdPinyin sec, wdEng sec)
+                }
 
-  let wordsWithDefs =
-        orderCovering css coveringWords
-          & fmap (\w -> (w, defIndex M.! w))
+  let cardCols = \case
+        Just (txt, pinyin, eng) -> [txt, pinyin, eng]
+        Nothing -> ["", "", ""]
 
-  let cards = makeWritingCards wordsWithDefs
-
-  forM_ cards $ \PronunciationCard {..} ->
-    [pcClue, pcWord, pcPinyin, pcTranslation]
-      & T.intercalate "\t"
-      & T.putStrLn
+  cards
+    & fmap
+      ( \PronunciationCard {..} ->
+          pcChar : pcClue : cardCols (Just pcPrimary) <> cardCols pcSecondary
+      )
+    & fmap (T.intercalate "\t")
+    & mapM_ T.putStrLn
   where
     charsInWord :: T.Text -> S.Set T.Text
     charsInWord = T.unpack >>> foldMap (T.singleton >>> S.singleton)
 
-    charScores :: Sq.Seq (Sq.Seq WordDef) -> M.Map T.Text Float
-    charScores gs =
-      zip [0 ..] (toList gs)
-        & foldMap (\(lvl, ds) -> foldMap (wdTxt >>> charsInWord >>> toList >>> fmap (,lvl)) ds & toList)
-        & fmap (second ((Sq.length gs -) >>> fromIntegral >>> (/ fromIntegral (Sq.length gs))))
-        & M.fromListWith max
-
-    go :: M.Map T.Text Float -> M.Map T.Text (S.Set T.Text) -> S.Set T.Text -> [T.Text] -> [T.Text]
-    go css wordIndex remChars = \case
-      [] -> []
-      (c : cs)
-        | S.member c remChars ->
-            let lws = liveWords wordIndex c
-                bestWord = maximumBy (comparing (score css remChars)) lws
-             in bestWord
-                  : go css wordIndex (S.difference remChars (charsInWord bestWord)) cs
-      (_ : cs) -> go css wordIndex remChars cs
-
-    score :: M.Map T.Text Float -> S.Set T.Text -> T.Text -> (Float, Float)
-    score css remChars w =
-      w
-        & charsInWord
-        & S.intersection remChars
-        & foldMap ((css M.!) >>> Sum)
-        & getSum
-        & (,-(T.length w & fromIntegral))
-
-    -- Should never be empty...
-    liveWords :: M.Map T.Text (S.Set T.Text) -> T.Text -> NE.NonEmpty T.Text
-    liveWords wi = (wi M.!?) >>> fromMaybe mempty >>> toList >>> NE.fromList
-
-    orderCovering :: M.Map T.Text Float -> [T.Text] -> [T.Text]
-    orderCovering css =
-      List.sortOn (charsInWord >>> S.size)
-        >>> List.sortOn (charsInWord >>> toList >>> fmap (css M.!) >>> minimum)
-        >>> List.sortOn (charsInWord >>> toList >>> fmap (css M.!) >>> maximum)
-        >>> List.reverse
-
-    makeWritingCards :: [(T.Text, WordDef)] -> [PronunciationCard]
-    makeWritingCards =
-      foldMap (\(w, wd) -> charsInWord w & toList & fmap (,(w, wd)))
-        >>> List.nubBy ((==) `on` fst)
-        >>> fmap (uncurry goCard)
+    lookupCharDefs :: M.Map T.Text (Sq.Seq WordDef) -> T.Text -> (WordDef, Maybe WordDef)
+    lookupCharDefs defIndex c
+      | wdTxt simplestDef == c,
+        Just wordDef <- maybeWordDef =
+          (wordDef, Just simplestDef)
+      | wdTxt simplestDef == c = (simplestDef, Nothing)
+      | otherwise = (simplestDef, maybeCharDef)
       where
-        goCard :: T.Text -> (T.Text, WordDef) -> PronunciationCard
-        goCard c (w, wd) =
-          PronunciationCard
-            { pcClue =
-                T.map
-                  (\c2 -> if T.singleton c2 == c then c2 else '_')
-                  w,
-              pcWord = w,
-              pcPinyin = wdPinyin wd,
-              pcTranslation =
-                missingTranslations M.!? w
-                  & fromMaybe (wdEng wd)
-            }
-
-    -- \| From google translate, not great...
-    missingTranslations :: M.Map T.Text T.Text
-    missingTranslations =
-      M.fromList
-        [ ("電視台", "PRC state TV network"),
-          ("下午茶", "Afternoon tea"),
-          ("還要", "Also"),
-          ("如果說", "If one were to say"),
-          ("曬太陽", "To be in the sun"),
-          ("笑嘻嘻", "Grinning"),
-          ("奇蹟", "Miracle"),
-          ("轉帳", "Transfer"),
-          ("橋樑", "Bridge"),
-          ("鮮艶", "Fresh"),
-          ("嘴脣", "Lips"),
-          ("吸菸", "Smoking"),
-          ("鈕扣", "Buttons"),
-          ("潮溼", "Wet"),
-          ("艱鉅", "Difficult"),
-          -- 'Variant of...' definitions
-          ("台灣", "Taiwan"),
-          ("這裏", "Here"),
-          ("澈底", "Totally"),
-          ("倒楣", "Unlucky"),
-          ("櫃臺", "Counter"),
-          ("傢伙", "Guys"),
-          ("砲", "Cannon")
-        ]
+        defs = defIndex M.! c
+        simplestDef =
+          defs Sq.!? 0
+            & fromMaybe (error "Impossible: no definitions for character")
+        maybeCharDef = find (wdTxt >>> (== c)) defs
+        maybeWordDef = find (wdTxt >>> (/= c)) defs
 
 main :: IO ()
 main =
