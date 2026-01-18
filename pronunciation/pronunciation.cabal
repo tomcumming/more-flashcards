@@ -8,11 +8,8 @@ executable pronunciation
     main-is: Main.hs
     hs-source-dirs: exe
     ghc-options: -Wall
-    default-language: GHC2021
+    default-language: GHC2024
     default-extensions:
-      DerivingVia
-      LambdaCase
-      MultiWayIf
       OverloadedStrings
       RecordWildCards
     build-depends:

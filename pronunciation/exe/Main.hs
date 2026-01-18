@@ -14,6 +14,7 @@ import Data.Sequence qualified as Sq
 import Data.Set qualified as S
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
+import Data.Traversable (mapAccumL)
 import DataLoading (WordDef (..), interleave, loadHskWords, loadTocflWords, shuffleGroups, uniqueBy, wdTxt)
 import Streaming.Prelude qualified as St
 import System.Environment (getArgs)
@@ -176,11 +177,74 @@ doPronunciation = do
         maybeCharDef = find (wdTxt >>> (== c)) defs
         maybeWordDef = find (wdTxt >>> (/= c)) defs
 
+simpleCombined :: IO (Sq.Seq WordDef)
+simpleCombined = do
+  hskWordGroups <- loadHskWords
+  tocflWordGroups <- loadTocflWords
+
+  let hskWordSet = foldMap (foldMap (wdTxt >>> S.singleton)) hskWordGroups
+  let tocflDuplicate WordDef {wdTxt, wdTrad} =
+        S.member wdTxt hskWordSet && wdTrad
+
+  interleave
+    (shuffleGroups hskWordGroups & toList)
+    (shuffleGroups tocflWordGroups & toList)
+    & filter (tocflDuplicate >>> not)
+    & Sq.fromList
+    & pure
+
+doSimpleEnglish :: IO ()
+doSimpleEnglish = do
+  allDefs <- simpleCombined
+
+  ["Word", "Pinyin", "Trad", "English"]
+    & T.intercalate "\t"
+    & T.putStrLn
+
+  forM_ allDefs $ \WordDef {..} ->
+    [ wdTxt,
+      wdPinyin,
+      if wdTrad then "1" else "0",
+      wdEng
+    ]
+      & T.intercalate "\t"
+      & T.putStrLn
+
+doSimplePinyin :: IO ()
+doSimplePinyin = do
+  let uniqueChars seen wd =
+        let charsInWord =
+              wdTxt wd
+                & T.unpack
+                & S.fromList
+         in if charsInWord `S.isSubsetOf` seen
+              then (seen, [])
+              else (seen <> charsInWord, [wd])
+
+  allDefs <-
+    simpleCombined
+      <&> (toList >>> mapAccumL uniqueChars mempty >>> snd >>> fold)
+
+  ["Word", "Pinyin", "Trad", "English"]
+    & T.intercalate "\t"
+    & T.putStrLn
+
+  forM_ allDefs $ \WordDef {..} ->
+    [ wdTxt,
+      wdPinyin,
+      if wdTrad then "1" else "0",
+      wdEng
+    ]
+      & T.intercalate "\t"
+      & T.putStrLn
+
 main :: IO ()
 main =
   getArgs >>= \case
     ["pronunciation"] -> doPronunciation
     ["translation"] -> doEnglish
+    ["simple-english"] -> doSimpleEnglish
+    ["simple-pinyin"] -> doSimplePinyin
     args ->
       "Use arg 'pronunciation' or 'translation': "
         <> show args

@@ -6,12 +6,10 @@ build-type: Simple
 
 common shared
     ghc-options: -Wall
-    default-language: GHC2021
+    default-language: GHC2024
     default-extensions:
-      DerivingVia
-      LambdaCase
-      OverloadedStrings
       RecordWildCards
+      OverloadedStrings
     build-depends:
       base,
       containers,
